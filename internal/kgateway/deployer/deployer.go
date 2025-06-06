@@ -595,7 +595,7 @@ func (d *Deployer) DeployObjs(ctx context.Context, objs []client.Object) error {
 				"name", obj.GetName(),
 				"error", err)
 		case err != nil:
-			// do nothing
+			// do nothing - this is a non-existent object
 		default:
 			// Check if the objects are equal - if they are, skip the patch
 			if equality.Semantic.DeepEqual(obj, existing) {
@@ -605,6 +605,7 @@ func (d *Deployer) DeployObjs(ctx context.Context, objs []client.Object) error {
 					"name", obj.GetName())
 				continue
 			}
+			// TODO: log metric
 		}
 
 		logger.V(1).Info("deploying object", "kind", obj.GetObjectKind(), "namespace", obj.GetNamespace(), "name", obj.GetName())

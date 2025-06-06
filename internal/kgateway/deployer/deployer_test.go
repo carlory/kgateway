@@ -2437,3 +2437,107 @@ func newCommonCols(t test.Failer, initObjs ...client.Object) *common.CommonColle
 	gateways.Gateways.WaitUntilSynced(ctx.Done())
 	return commonCols
 }
+
+var _ = Describe("DeployObjs", func() {
+	var (
+		ns      = "test-ns"
+		name    = "test-obj"
+		ctx     = context.Background()
+		objKind = "ConfigMap"
+	)
+
+	It("skips patch if object is unchanged", func() {
+		patched := false
+		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+		fc := &fakeClient{
+			getFunc: func(_ context.Context, _ client.ObjectKey, obj client.Object) error {
+				// Simulate existing object is identical
+				*obj.(*corev1.ConfigMap) = *cm.DeepCopy()
+				return nil
+			},
+			patchFunc: func(_ context.Context, _ client.Object, _ client.Patch, _ ...client.PatchOption) error {
+				patched = true
+				return nil
+			},
+		}
+		d := &deployer.Deployer{cli: fc, inputs: &deployer.Inputs{ControllerName: "test"}}
+		err := d.DeployObjs(ctx, []client.Object{cm})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(patched).To(BeFalse())
+	})
+
+	It("patches if object is different", func() {
+		patched := false
+		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}, Data: map[string]string{"foo": "bar"}}
+		fc := &fakeClient{
+			getFunc: func(_ context.Context, _ client.ObjectKey, obj client.Object) error {
+				// Simulate existing object is different
+				*obj.(*corev1.ConfigMap) = corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}, Data: map[string]string{"foo": "baz"}}
+				return nil
+			},
+			patchFunc: func(_ context.Context, _ client.Object, _ client.Patch, _ ...client.PatchOption) error {
+				patched = true
+				return nil
+			},
+		}
+		d := &deployer.Deployer{cli: fc, inputs: &deployer.Inputs{ControllerName: "test"}}
+		err := d.DeployObjs(ctx, []client.Object{cm})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(patched).To(BeTrue())
+	})
+
+	It("patches if object does not exist (IsNotFound)", func() {
+		patched := false
+		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+		fc := &fakeClient{
+			getFunc: func(_ context.Context, _ client.ObjectKey, _ client.Object) error {
+				return apierrors.NewNotFound(corev1.Resource("configmaps"), name)
+			},
+			patchFunc: func(_ context.Context, _ client.Object, _ client.Patch, _ ...client.PatchOption) error {
+				patched = true
+				return nil
+			},
+		}
+		d := &deployer.Deployer{cli: fc, inputs: &deployer.Inputs{ControllerName: "test"}}
+		err := d.DeployObjs(ctx, []client.Object{cm})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(patched).To(BeTrue())
+	})
+
+	It("patches if Get returns a non-IsNotFound error", func() {
+		patched := false
+		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+		fc := &fakeClient{
+			getFunc: func(_ context.Context, _ client.ObjectKey, _ client.Object) error {
+				return fmt.Errorf("some random error")
+			},
+			patchFunc: func(_ context.Context, _ client.Object, _ client.Patch, _ ...client.PatchOption) error {
+				patched = true
+				return nil
+			},
+		}
+		d := &deployer.Deployer{cli: fc, inputs: &deployer.Inputs{ControllerName: "test"}}
+		err := d.DeployObjs(ctx, []client.Object{cm})
+		Expect(err).ToNot(HaveOccurred())
+		Expect(patched).To(BeTrue())
+	})
+})
+
+type fakeClient struct {
+	client.Client
+	getFunc   func(ctx context.Context, key client.ObjectKey, obj client.Object) error
+	patchFunc func(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error
+}
+
+func (f *fakeClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object) error {
+	if f.getFunc != nil {
+		return f.getFunc(ctx, key, obj)
+	}
+	return nil
+}
+func (f *fakeClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+	if f.patchFunc != nil {
+		return f.patchFunc(ctx, obj, patch, opts...)
+	}
+	return nil
+}
