@@ -587,15 +587,16 @@ func (d *Deployer) DeployObjs(ctx context.Context, objs []client.Object) error {
 		err := d.cli.Get(ctx, client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()}, existing)
 
 		// If the object doesn't exist or there's an error other than "not found", proceed with patching
-		if err != nil {
-			if !apierrors.IsNotFound(err) {
-				logger.V(1).Info("error getting existing object, will apply anyway",
-					"kind", obj.GetObjectKind().GroupVersionKind().String(),
-					"namespace", obj.GetNamespace(),
-					"name", obj.GetName(),
-					"error", err)
-			}
-		} else {
+		switch {
+		case !apierrors.IsNotFound(err):
+			logger.V(1).Info("error getting existing object, will apply anyway",
+				"kind", obj.GetObjectKind().GroupVersionKind().String(),
+				"namespace", obj.GetNamespace(),
+				"name", obj.GetName(),
+				"error", err)
+		case err != nil:
+			// do nothing
+		default:
 			// Check if the objects are equal - if they are, skip the patch
 			if equality.Semantic.DeepEqual(obj, existing) {
 				logger.V(1).Info("object unchanged, skipping apply",
