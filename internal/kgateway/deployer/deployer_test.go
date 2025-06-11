@@ -22,7 +22,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -2469,17 +2468,13 @@ var _ = Describe("DeployObjs", func() {
 		patched := false
 		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}, Data: map[string]string{"foo": "bar"}}
 		fc := &fakeClient{
-			Client: newFakeClientWithObjs(cm),
-			getFunc: func(_ context.Context, _ client.ObjectKey, obj client.Object) error {
-				// Simulate existing object is different
-				*obj.(*corev1.ConfigMap) = corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}, Data: map[string]string{"foo": "baz"}}
-				return nil
-			},
+			Client: newFakeClientWithObjs(cm.DeepCopy()),
 			patchFunc: func(_ context.Context, _ client.Object, _ client.Patch, _ ...client.PatchOption) error {
 				patched = true
 				return nil
 			},
 		}
+		cm.Data = map[string]string{"foo": "bar", "bar": "baz"}
 		d, err := deployer.NewDeployer(fc, &deployer.Inputs{ControllerName: "test"})
 		Expect(err).ToNot(HaveOccurred())
 		err = d.DeployObjs(ctx, []client.Object{cm})
@@ -2491,10 +2486,7 @@ var _ = Describe("DeployObjs", func() {
 		patched := false
 		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
 		fc := &fakeClient{
-			Client: newFakeClientWithObjs(cm),
-			getFunc: func(_ context.Context, _ client.ObjectKey, _ client.Object) error {
-				return apierrors.NewNotFound(corev1.Resource("configmaps"), name)
-			},
+			Client: newFakeClientWithObjs(),
 			patchFunc: func(_ context.Context, _ client.Object, _ client.Patch, _ ...client.PatchOption) error {
 				patched = true
 				return nil
@@ -2511,7 +2503,7 @@ var _ = Describe("DeployObjs", func() {
 		patched := false
 		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
 		fc := &fakeClient{
-			Client: newFakeClientWithObjs(cm),
+			Client: newFakeClientWithObjs(cm.DeepCopy()),
 			getFunc: func(_ context.Context, _ client.ObjectKey, _ client.Object) error {
 				return fmt.Errorf("some random error")
 			},
