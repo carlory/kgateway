@@ -2,6 +2,7 @@ package deployer_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -2440,28 +2442,25 @@ func newCommonCols(t test.Failer, initObjs ...client.Object) *common.CommonColle
 
 var _ = Describe("DeployObjs", func() {
 	var (
-		ns      = "test-ns"
-		name    = "test-obj"
-		ctx     = context.Background()
-		objKind = "ConfigMap"
+		ns   = "test-ns"
+		name = "test-obj"
+		ctx  = context.Background()
 	)
 
 	It("skips patch if object is unchanged", func() {
 		patched := false
-		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}, Data: map[string]string{"foo": "bar"}}
 		fc := &fakeClient{
-			getFunc: func(_ context.Context, _ client.ObjectKey, obj client.Object) error {
-				// Simulate existing object is identical
-				*obj.(*corev1.ConfigMap) = *cm.DeepCopy()
-				return nil
-			},
+			Client: newFakeClientWithObjs(cm.DeepCopy()),
 			patchFunc: func(_ context.Context, _ client.Object, _ client.Patch, _ ...client.PatchOption) error {
-				patched = true
-				return nil
+				Fail("should not be called")
+				return errors.New("should not be called")
 			},
 		}
-		d := &deployer.Deployer{cli: fc, inputs: &deployer.Inputs{ControllerName: "test"}}
-		err := d.DeployObjs(ctx, []client.Object{cm})
+		d, err := deployer.NewDeployer(fc, &deployer.Inputs{ControllerName: "test"})
+		Expect(err).ToNot(HaveOccurred())
+
+		err = d.DeployObjs(ctx, []client.Object{cm})
 		Expect(err).ToNot(HaveOccurred())
 		Expect(patched).To(BeFalse())
 	})
@@ -2470,6 +2469,7 @@ var _ = Describe("DeployObjs", func() {
 		patched := false
 		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}, Data: map[string]string{"foo": "bar"}}
 		fc := &fakeClient{
+			Client: newFakeClientWithObjs(cm),
 			getFunc: func(_ context.Context, _ client.ObjectKey, obj client.Object) error {
 				// Simulate existing object is different
 				*obj.(*corev1.ConfigMap) = corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}, Data: map[string]string{"foo": "baz"}}
@@ -2480,8 +2480,9 @@ var _ = Describe("DeployObjs", func() {
 				return nil
 			},
 		}
-		d := &deployer.Deployer{cli: fc, inputs: &deployer.Inputs{ControllerName: "test"}}
-		err := d.DeployObjs(ctx, []client.Object{cm})
+		d, err := deployer.NewDeployer(fc, &deployer.Inputs{ControllerName: "test"})
+		Expect(err).ToNot(HaveOccurred())
+		err = d.DeployObjs(ctx, []client.Object{cm})
 		Expect(err).ToNot(HaveOccurred())
 		Expect(patched).To(BeTrue())
 	})
@@ -2490,6 +2491,7 @@ var _ = Describe("DeployObjs", func() {
 		patched := false
 		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
 		fc := &fakeClient{
+			Client: newFakeClientWithObjs(cm),
 			getFunc: func(_ context.Context, _ client.ObjectKey, _ client.Object) error {
 				return apierrors.NewNotFound(corev1.Resource("configmaps"), name)
 			},
@@ -2498,8 +2500,9 @@ var _ = Describe("DeployObjs", func() {
 				return nil
 			},
 		}
-		d := &deployer.Deployer{cli: fc, inputs: &deployer.Inputs{ControllerName: "test"}}
-		err := d.DeployObjs(ctx, []client.Object{cm})
+		d, err := deployer.NewDeployer(fc, &deployer.Inputs{ControllerName: "test"})
+		Expect(err).ToNot(HaveOccurred())
+		err = d.DeployObjs(ctx, []client.Object{cm})
 		Expect(err).ToNot(HaveOccurred())
 		Expect(patched).To(BeTrue())
 	})
@@ -2508,6 +2511,7 @@ var _ = Describe("DeployObjs", func() {
 		patched := false
 		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
 		fc := &fakeClient{
+			Client: newFakeClientWithObjs(cm),
 			getFunc: func(_ context.Context, _ client.ObjectKey, _ client.Object) error {
 				return fmt.Errorf("some random error")
 			},
@@ -2516,8 +2520,9 @@ var _ = Describe("DeployObjs", func() {
 				return nil
 			},
 		}
-		d := &deployer.Deployer{cli: fc, inputs: &deployer.Inputs{ControllerName: "test"}}
-		err := d.DeployObjs(ctx, []client.Object{cm})
+		d, err := deployer.NewDeployer(fc, &deployer.Inputs{ControllerName: "test"})
+		Expect(err).ToNot(HaveOccurred())
+		err = d.DeployObjs(ctx, []client.Object{cm})
 		Expect(err).ToNot(HaveOccurred())
 		Expect(patched).To(BeTrue())
 	})
@@ -2529,15 +2534,15 @@ type fakeClient struct {
 	patchFunc func(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error
 }
 
-func (f *fakeClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object) error {
+func (f *fakeClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 	if f.getFunc != nil {
 		return f.getFunc(ctx, key, obj)
 	}
-	return nil
+	return f.Client.Get(ctx, key, obj)
 }
 func (f *fakeClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 	if f.patchFunc != nil {
 		return f.patchFunc(ctx, obj, patch, opts...)
 	}
-	return nil
+	return f.Client.Patch(ctx, obj, patch, opts...)
 }

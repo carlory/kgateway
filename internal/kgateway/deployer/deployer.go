@@ -588,15 +588,16 @@ func (d *Deployer) DeployObjs(ctx context.Context, objs []client.Object) error {
 
 		// If the object doesn't exist or there's an error other than "not found", proceed with patching
 		switch {
-		case !apierrors.IsNotFound(err):
-			logger.V(1).Info("error getting existing object, will apply anyway",
-				"kind", obj.GetObjectKind().GroupVersionKind().String(),
-				"namespace", obj.GetNamespace(),
-				"name", obj.GetName(),
-				"error", err)
-		case err != nil:
-			// do nothing - this is a non-existent object
-		default:
+		case err == nil:
+			// zero out fields that api server changes
+			existing.SetResourceVersion("")
+			existing.SetGeneration(0)
+			existing.SetUID("")
+			existing.SetCreationTimestamp(metav1.Time{})
+			existing.SetDeletionTimestamp(nil)
+			existing.SetDeletionGracePeriodSeconds(nil)
+			existing.SetManagedFields(nil)
+
 			// Check if the objects are equal - if they are, skip the patch
 			if equality.Semantic.DeepEqual(obj, existing) {
 				logger.V(1).Info("object unchanged, skipping apply",
@@ -605,7 +606,16 @@ func (d *Deployer) DeployObjs(ctx context.Context, objs []client.Object) error {
 					"name", obj.GetName())
 				continue
 			}
-			// TODO: log metric
+		case !apierrors.IsNotFound(err):
+			logger.V(1).Info("error getting existing object, will apply anyway",
+				"kind", obj.GetObjectKind().GroupVersionKind().String(),
+				"namespace", obj.GetNamespace(),
+				"name", obj.GetName(),
+				"error", err)
+		default:
+			// do nothing - this is a non-existent object
+
+			// TODO: inc a metric when we add metrics.
 		}
 
 		logger.V(1).Info("deploying object", "kind", obj.GetObjectKind(), "namespace", obj.GetNamespace(), "name", obj.GetName())
