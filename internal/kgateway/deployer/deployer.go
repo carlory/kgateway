@@ -584,7 +584,6 @@ func (d *Deployer) GetEndpointPickerObjs(pool *infextv1a2.InferencePool) ([]clie
 func (d *Deployer) DeployObjs(ctx context.Context, objs []client.Object) error {
 	logger := log.FromContext(ctx)
 	for _, obj := range objs {
-
 		// Get the existing object from the cache to check if it needs to be updated
 		existing := obj.DeepCopyObject().(client.Object)
 		err := d.cli.Get(ctx, client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()}, existing)
